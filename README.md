@@ -1,2 +1,2 @@
-# KFStatusServer
-Discord bot that provides status information about currently active servers.
+# KFTurboStatusServer
+Discord bot that provides status information about currently active turbo servers.
