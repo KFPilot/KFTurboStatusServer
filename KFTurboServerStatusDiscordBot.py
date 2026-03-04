@@ -64,7 +64,7 @@ bot_config = BotConfig(
     listen_port=int(raw_config['listen_port']),
     steam_api_key=raw_config['steam_api_key'],
     steam_api_url=raw_config['steam_api_url'],
-    update_cooldown=float(raw_config.get('update_cooldown', 0.1)),
+    update_cooldown=float(raw_config.get('update_cooldown', 0.5)),
 )
 
 intents = discord.Intents.default()
@@ -248,24 +248,26 @@ async def build_session_embed(info: ServerPayload, session_id: str, from_update:
     return embed
 
 async def create_session_embed(channel, info: ServerPayload, session_id: str):
+    global active_embeds
     embed = await build_session_embed(info, session_id, False)
     msg = await channel.send(embed=embed)
     active_embeds[session_id] = ActiveEmbed(msg=msg, last_update=datetime.datetime.now(), last_payload=info)
 
 async def update_session_embed(info: ServerPayload, session_id: str):
+    global active_embeds
     embed = await build_session_embed(info, session_id, True)
     try:
         await active_embeds[session_id].msg.edit(embed=embed)
     except:
         print("Failed to edit message.")
-    active_embeds[session_id].last_update = datetime.datetime.now()
 
     if info.match_state != -1:
         active_embeds[session_id].last_payload = info
 
 async def delete_stale_embeds():
-    four_hours_ago = datetime.datetime.now() - datetime.timedelta(minutes=2)
-    to_delete = [sid for sid, v in active_embeds.items() if v.last_update < four_hours_ago]
+    global active_embeds
+    min_embed_age = datetime.datetime.now() - datetime.timedelta(minutes=2)
+    to_delete = [sid for sid, v in active_embeds.items() if v.last_update < min_embed_age]
     for sid in to_delete:
         try:
             await active_embeds[sid].msg.delete()
@@ -274,14 +276,19 @@ async def delete_stale_embeds():
         del active_embeds[sid]
 
 async def update_active_embeds(channel):
-    session_keys = list(session_payloads.keys())
+    global session_payloads
+    new_session_payloads = dict(session_payloads)
+    session_payloads = dict()
+    session_keys = list(new_session_payloads.keys())
     for sid in session_keys:
-        info = session_payloads[sid]
+        info = new_session_payloads[sid]
         session_id = info.session_id
         match_state = info.match_state if info.match_state is not None else -1
         if not session_id:
             continue
-        if match_state != -1 and session_id not in active_embeds:
+        if match_state == -1:
+            continue
+        if session_id not in active_embeds:
             await create_session_embed(channel, info, session_id)
         elif session_id in active_embeds:
             await update_session_embed(info, session_id)
@@ -291,16 +298,6 @@ async def embed_update_loop(channel):
     while True:
         await asyncio.sleep(bot_config.update_cooldown)
         await update_active_embeds(channel)
-
-def update_dead_session(sid):
-    if sid in session_payloads:
-        session_payloads[sid].player_count = 0
-        session_payloads[sid].spectator_count = 0
-        session_payloads[sid].player_list = []
-        session_payloads[sid].spectator_list = []
-
-        if session_payloads[sid].match_state == 0:
-            session_payloads[sid].match_state = 3
 
 
 async def tcp_listener():
@@ -323,6 +320,18 @@ async def tcp_listener():
         except Exception as e:
             print(f"Error accepting connection: {e}")
             await asyncio.sleep(2)  # Prevent tight loop on repeated errors
+
+def receive_payload(new_payload: ServerPayload):
+    global session_payloads
+    new_session_id = new_payload.session_id
+    if (new_session_id in active_embeds) and (not new_session_id in session_payloads):
+        if not info_changed(active_embeds[new_session_id].last_payload, new_payload):
+            return
+    
+    session_payloads[new_session_id] = new_payload
+
+    if new_session_id in active_embeds:
+        active_embeds[new_session_id].last_update = datetime.datetime.now()
 
 async def handle_client(conn: socket.socket):
     buffer = ""
@@ -352,14 +361,11 @@ async def handle_client(conn: socket.socket):
 
                     if last_known_session_id != sid:
                         print("New session ID: "+sid)
-                        if last_known_session_id:
-                            update_dead_session(last_known_session_id)
                         last_known_session_id = sid
 
                     new_info = parse_payload(payload)
-                    old_info = session_payloads.get(sid)
-                    if not old_info or info_changed(old_info, new_info):
-                        session_payloads[sid] = new_info
+                    receive_payload(new_info)
+                            
                 except Exception as e:
                     print(f"Error parsing packet: {line} - {e}")
         except Exception as e:
