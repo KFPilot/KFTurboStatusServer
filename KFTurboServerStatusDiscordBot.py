@@ -159,15 +159,15 @@ def get_game_type_name(Payload:ServerPayload)-> str:
 def get_game_difficulty_name(Payload:ServerPayload)-> str:
     match Payload.difficulty:
         case "1":
-            return "Beginner"
+            return "Beginner <:DifficultyBeginner:1478845463300931665>"
         case "2":
-            return "Normal"
+            return "Normal <:DifficultyNormal:1478845429750698144>"
         case "4":
-            return "Hard"
+            return "Hard <:DifficultyHard:1478845383751897320>"
         case "5":
-            return "Suicidal"
+            return "Suicidal <:DifficultySuicidal:1478845341422977159>"
         case "7":
-            return "Hell on Earth"
+            return "Hell on Earth <:DifficultyHellOnEarth:1478845268895076362>"
     return "Unknown"
 
 def get_match_state_name(Payload:ServerPayload)-> str:
@@ -184,60 +184,75 @@ def get_match_state_name(Payload:ServerPayload)-> str:
             return "Abort"
     return "Unknown"
 
+def get_flag_icon(Payload:ServerPayload) -> str:
+    if not Payload.name:
+        return ""
+    name = Payload.name.lower().rstrip()
+    # Extract the last word(s) for matching
+    suffix = None
+    for loc in ["new york", "los angeles", "frankfurt", "sao paulo", "london", "singapore", "tokyo", "warsaw"]:
+        if name.endswith(loc):
+            suffix = loc
+            break
+    match suffix:
+        case "new york" | "los angeles":
+            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-united-states.png"
+        case "frankfurt":
+            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-germany.png"
+        case "sao paulo":
+            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-brazil.png"
+        case "london":
+            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-united-kingdom.png"
+        case "singapore":
+            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-singapore.png"
+        case "tokyo":
+            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-japan.png"
+        case "warsaw":
+            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-poland.png"
+        case _:
+            return "https://cdn.discordapp.com/embed/avatars/0.png"
+
 async def build_session_embed(info: ServerPayload, session_id: str, from_update: bool) -> discord.Embed:
     now = datetime.datetime.now()
-    
+
     embed = discord.Embed(
-        title=info.name or session_id,
+        title="Killing Floor Turbo Session",
         color=0xf6731a
     )
-
     if info.match_state > 0:
         embed.color = 0xef2e1c
 
     embed.set_author(
-        name="Killing Floor Turbo Session",
-        icon_url="https://cdn.discordapp.com/embed/avatars/0.png"
-    )
-
-    embed.add_field(
-        name="State",
-        value=f"{get_match_state_name(info)}",
-        inline=False
+        name=info.name or session_id,
+        icon_url=get_flag_icon(info)
     )
 
     game_type = get_game_type_name(info)
-    difficulty = get_game_difficulty_name(info)
     map_name = get_map_name(info)
-    embed.add_field(
-        name="Game",
-        value=f"{game_type}",
-        inline=False
-    )
-    embed.add_field(
-        name="Difficulty",
-        value=f"{difficulty}",
-        inline=False
-    )
-    embed.add_field(
-        name="Map",
-        value=f"{map_name}",
-        inline=False
-    )
-    embed.add_field(
-        name="Wave",
-        value=f"{abs(info.wave_state)}",
-        inline=False
-    )
+    state = get_match_state_name(info)
+    difficulty = get_game_difficulty_name(info)
+    wave = abs(info.wave_state)
+    final_wave = info.final_wave if info.final_wave > 0 else 0
+    spectator_count = info.spectator_count if info.spectator_count is not None else 0
 
-    if (info.match_state == 0):
+    # Grid: left to right, top to bottom
+    # Discord automatically wraps after 3 fields if inline, so we can just add them in order
+    grid_fields = [
+        ("Game Type", game_type),
+        ("Map", map_name),
+        ("State", state),
+        ("Difficulty", difficulty),
+        ("Wave", f"{wave}/{final_wave}"),
+        ("Spectators", str(spectator_count)),
+    ]
+    for name, value in grid_fields:
+        embed.add_field(name=name, value=value, inline=True)
 
+    # Player list
+    if info.match_state == 0:
         if info.player_list:
             profiles = await get_steam_profiles(info.player_list)
             player_list_str = "\n".join([profiles[pid].persona_name for pid in info.player_list])
-            if info.spectator_count > 0:
-                player_list_str = player_list_str + f"\nSpectators: {info.spectator_count}"
-
         else:
             player_list_str = "None"
         embed.add_field(
@@ -248,7 +263,7 @@ async def build_session_embed(info: ServerPayload, session_id: str, from_update:
 
     embed.set_footer(
         text=f"Last updated {now.strftime('%d/%m/%Y %H:%M')}",
-        icon_url="https://cdn.discordapp.com/embed/avatars/0.png"
+        icon_url="https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/TurboRelay.png"
     )
     return embed
 
