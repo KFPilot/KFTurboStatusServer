@@ -186,10 +186,15 @@ def get_match_state_name(Payload:ServerPayload)-> str:
 
 async def build_session_embed(info: ServerPayload, session_id: str, from_update: bool) -> discord.Embed:
     now = datetime.datetime.now()
+    
     embed = discord.Embed(
         title=info.name or session_id,
-        color=0x7891ff
+        color=0xf6731a
     )
+
+    if info.match_state > 0:
+        embed.color = 0xef2e1c
+
     embed.set_author(
         name="Killing Floor Turbo Session",
         icon_url="https://cdn.discordapp.com/embed/avatars/0.png"
