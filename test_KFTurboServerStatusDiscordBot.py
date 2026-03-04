@@ -48,6 +48,10 @@ class TestBotConfig(unittest.TestCase):
         self.assertIsInstance(bot.bot_config.channel_id, int)
         self.assertIsInstance(bot.bot_config.listen_port, int)
 
+    def test_update_cooldown_defaults(self):
+        self.assertEqual(bot.bot_config.update_cooldown, 0.1)
+        self.assertIsInstance(bot.bot_config.update_cooldown, float)
+
 
 class TestSteamProfile(unittest.TestCase):
     def test_fields(self):
@@ -487,6 +491,59 @@ class TestUpdateActiveEmbeds(unittest.TestCase):
         asyncio.get_event_loop().run_until_complete(bot.update_active_embeds(channel))
         mock_msg.delete.assert_called_once()
         self.assertNotIn("old_sess", bot.active_embeds)
+
+
+class TestEmbedUpdateLoop(unittest.TestCase):
+    def setUp(self):
+        bot.session_payloads.clear()
+        bot.active_embeds.clear()
+        bot.steam_profile_cache.clear()
+
+    def test_calls_update_active_embeds_after_sleep(self):
+        """The loop should sleep then call update_active_embeds."""
+        bot.session_payloads["x"] = bot.ServerPayload(
+            name="S", game="G", difficulty="D", map_file="M",
+            map_name="N", final_wave=7, match_state=0,
+            wave_state=1, player_count="1|6|0",
+            session_id="sess1",
+        )
+        mock_msg = MagicMock()
+        channel = MagicMock()
+        channel.send = AsyncMock(return_value=mock_msg)
+
+        call_count = 0
+        original_sleep = asyncio.sleep
+        async def fake_sleep(delay):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise asyncio.CancelledError()
+
+        with patch("KFTurboServerStatusDiscordBot.asyncio.sleep", side_effect=fake_sleep):
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.get_event_loop().run_until_complete(bot.embed_update_loop(channel))
+
+        channel.send.assert_called_once()
+        self.assertIn("sess1", bot.active_embeds)
+
+    def test_continues_on_error(self):
+        """The loop should catch errors and keep running."""
+        channel = MagicMock()
+
+        call_count = 0
+        async def fake_sleep(delay):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 2:
+                raise asyncio.CancelledError()
+
+        with patch("KFTurboServerStatusDiscordBot.asyncio.sleep", side_effect=fake_sleep), \
+             patch("KFTurboServerStatusDiscordBot.update_active_embeds", side_effect=[Exception("test error"), None]):
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.get_event_loop().run_until_complete(bot.embed_update_loop(channel))
+
+        # Should have gone through 2 iterations (error on first, success on second) before cancel on third sleep
+        self.assertEqual(call_count, 3)
 
 
 if __name__ == '__main__':
