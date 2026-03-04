@@ -266,7 +266,7 @@ async def update_session_embed(info: ServerPayload, session_id: str):
 
 async def delete_stale_embeds():
     global active_embeds
-    min_embed_age = datetime.datetime.now() - datetime.timedelta(minutes=2)
+    min_embed_age = datetime.datetime.now() - datetime.timedelta(minutes=5)
     to_delete = [sid for sid, v in active_embeds.items() if v.last_update < min_embed_age]
     for sid in to_delete:
         try:
