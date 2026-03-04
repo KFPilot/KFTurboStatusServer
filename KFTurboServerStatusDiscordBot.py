@@ -37,13 +37,16 @@ class ServerPayload:
     final_wave: Optional[int]
     match_state: Optional[int]
     wave_state: Optional[int]
-    player_count: Optional[str]
+    player_count: Optional[int]
+    player_max: Optional[int]
+    spectator_count: Optional[int]
     player_list: list[str] = field(default_factory=list)
     spectator_list: list[str] = field(default_factory=list)
     session_id: Optional[str] = None
 
 @dataclass
 class ActiveEmbed:
+    last_payload : ServerPayload
     msg: discord.Message
     last_update: datetime.datetime
 
@@ -105,6 +108,15 @@ async def get_steam_profiles(steam_ids: list[str], retry_count: int = 1, retry_d
     return {sid: steam_profile_cache.get(sid, SteamProfile(steam_id=sid, persona_name=sid)) for sid in steam_ids}
 
 def parse_payload(data: dict) -> ServerPayload:
+    PlayerCount = data.get('pc').split('|')
+
+    #Once game ends, just cleanup player data.
+    if data.get('ms') > 0:
+        PlayerCount[0] = 0
+        PlayerCount[2] = 0
+        data['pl'] = []
+        data['sl'] = []
+
     return ServerPayload(
         name=data.get('serv'),
         game=data.get('game'),
@@ -114,7 +126,9 @@ def parse_payload(data: dict) -> ServerPayload:
         final_wave=data.get('fw'),
         match_state=data.get('ms'),
         wave_state=data.get('ws'),
-        player_count=data.get('pc'),
+        player_count=PlayerCount[0],
+        player_max=PlayerCount[1],
+        spectator_count=PlayerCount[2],
         player_list=data.get('pl', []),
         spectator_list=data.get('sl', []),
         session_id=data.get('sid'),
@@ -123,7 +137,52 @@ def parse_payload(data: dict) -> ServerPayload:
 def info_changed(old: ServerPayload, new: ServerPayload) -> bool:
     return old != new
 
-async def build_session_embed(info: ServerPayload, session_id: str) -> discord.Embed:
+def get_map_name(Payload:ServerPayload)-> str:
+    if (not Payload.map_name) or Payload.map_name.lower() == "untitled":
+        return Payload.map_file
+    return Payload.map_name
+
+def get_game_type_name(Payload:ServerPayload)-> str:
+    match Payload.game.lower():
+        case "turbo":
+            return "Turbo"
+        case "turboplus":
+            return "Turbo+"
+        case "turbocardgame":
+            return "Card Game"
+        case "turborandomizer":
+            return "Randomizer"
+        case "turboholdoutgame":
+            return "Holdout"
+    return "Unknown"
+
+def get_game_difficulty_name(Payload:ServerPayload)-> str:
+    match Payload.difficulty:
+        case "1":
+            return "Beginner"
+        case "2":
+            return "Normal"
+        case "4":
+            return "Hard"
+        case "5":
+            return "Suicidal"
+        case "7":
+            return "Hell on Earth"
+    return "Unknown"
+
+def get_match_state_name(Payload:ServerPayload)-> str:
+    match Payload.match_state:
+        case -1:
+            return "Not Started"
+        case 0:
+            return "In Progress"
+        case 1:
+            return "Lost"
+        case 2:
+            return "Won"
+    return "Unknown"
+
+async def build_session_embed(info: ServerPayload, session_id: str, from_update: bool) -> discord.Embed:
     now = datetime.datetime.now()
     embed = discord.Embed(
         title=info.name or session_id,
@@ -133,14 +192,39 @@ async def build_session_embed(info: ServerPayload, session_id: str) -> discord.E
         name="Killing Floor Turbo Session",
         icon_url="https://cdn.discordapp.com/embed/avatars/0.png"
     )
-    game_type = info.game or "Unknown"
-    difficulty = info.difficulty or "Unknown"
-    map_name = info.map_name or info.map_file or "Unknown"
+
     embed.add_field(
-        name="Game",
-        value=f"{game_type}\n{difficulty}\n{map_name}",
+        name="State",
+        value=f"{get_match_state_name(info)}",
         inline=False
     )
+
+    game_type = get_game_type_name(info)
+    difficulty = get_game_difficulty_name(info)
+    map_name = get_map_name(info)
+    embed.add_field(
+        name="Game",
+        value=f"{game_type}",
+        inline=False
+    )
+    embed.add_field(
+        name="Difficulty",
+        value=f"{difficulty}",
+        inline=False
+    )
+    embed.add_field(
+        name="Map",
+        value=f"{map_name}",
+        inline=False
+    )
+
+    if (abs(info.wave_state) > 0):   
+        embed.add_field(
+            name="Wave",
+            value=f"{abs(info.wave_state)}",
+            inline=False
+        )
+
     if info.player_list:
         profiles = await get_steam_profiles(info.player_list)
         player_list_str = "\n".join([profiles[pid].persona_name for pid in info.player_list])
@@ -151,6 +235,7 @@ async def build_session_embed(info: ServerPayload, session_id: str) -> discord.E
         value=player_list_str,
         inline=False
     )
+
     embed.set_footer(
         text=f"Last updated {now.strftime('%d/%m/%Y %H:%M')}",
         icon_url="https://cdn.discordapp.com/embed/avatars/0.png"
@@ -158,24 +243,32 @@ async def build_session_embed(info: ServerPayload, session_id: str) -> discord.E
     return embed
 
 async def create_session_embed(channel, info: ServerPayload, session_id: str):
-    embed = await build_session_embed(info, session_id)
+    embed = await build_session_embed(info, session_id, False)
     msg = await channel.send(embed=embed)
-    active_embeds[session_id] = ActiveEmbed(msg=msg, last_update=datetime.datetime.now())
+    active_embeds[session_id] = ActiveEmbed(msg=msg, last_update=datetime.datetime.now(), last_payload=info)
 
 async def update_session_embed(info: ServerPayload, session_id: str):
-    embed = await build_session_embed(info, session_id)
+    embed = await build_session_embed(info, session_id, True)
     await active_embeds[session_id].msg.edit(embed=embed)
     active_embeds[session_id].last_update = datetime.datetime.now()
 
+    if info.match_state != -1:
+        active_embeds[session_id].last_payload = info
+
 async def delete_stale_embeds():
-    four_hours_ago = datetime.datetime.now() - datetime.timedelta(hours=4)
+    four_hours_ago = datetime.datetime.now() - datetime.timedelta(minutes=2)
     to_delete = [sid for sid, v in active_embeds.items() if v.last_update < four_hours_ago]
     for sid in to_delete:
-        await active_embeds[sid].msg.delete()
+        try:
+            await active_embeds[sid].msg.delete()
+        except:
+            print("Failed to delete message.")
         del active_embeds[sid]
 
 async def update_active_embeds(channel):
-    for sid, info in session_payloads.items():
+    session_keys = list(session_payloads.keys())
+    for sid in session_keys:
+        info = session_payloads[sid]
         session_id = info.session_id
         match_state = info.match_state if info.match_state is not None else -1
         if not session_id:
@@ -189,10 +282,8 @@ async def update_active_embeds(channel):
 async def embed_update_loop(channel):
     while True:
         await asyncio.sleep(bot_config.update_cooldown)
-        try:
-            await update_active_embeds(channel)
-        except Exception as e:
-            print(f"Error updating embeds: {e}")
+        await update_active_embeds(channel)
+    
 
 async def tcp_listener():
     loop = asyncio.get_event_loop()
@@ -230,9 +321,14 @@ async def handle_client(conn: socket.socket):
                 line = line.strip()
                 if not line:
                     continue
+
+                if (line == "keepalive"):
+                    continue
+
                 try:
                     payload = json.loads(line)
                     sid = payload.get('sid')
+                    print("Session ID: "+sid)
                     if not sid:
                         continue
                     new_info = parse_payload(payload)
@@ -244,6 +340,7 @@ async def handle_client(conn: socket.socket):
         except Exception as e:
             print(f"Error receiving data: {e}")
             break
+    print(f"Closing connection.")
     conn.close()
 
 @client.event
