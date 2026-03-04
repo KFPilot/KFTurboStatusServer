@@ -126,9 +126,9 @@ def parse_payload(data: dict) -> ServerPayload:
         final_wave=data.get('fw'),
         match_state=data.get('ms'),
         wave_state=data.get('ws'),
-        player_count=PlayerCount[0],
-        player_max=PlayerCount[1],
-        spectator_count=PlayerCount[2],
+        player_count=int(PlayerCount[0]),
+        player_max=int(PlayerCount[1]),
+        spectator_count=int(PlayerCount[2]),
         player_list=data.get('pl', []),
         spectator_list=data.get('sl', []),
         session_id=data.get('sid'),
@@ -173,13 +173,15 @@ def get_game_difficulty_name(Payload:ServerPayload)-> str:
 def get_match_state_name(Payload:ServerPayload)-> str:
     match Payload.match_state:
         case -1:
-            return "Not Started"
+            return "Waiting"
         case 0:
             return "In Progress"
         case 1:
-            return "Lost"
+            return "Wipe"
         case 2:
-            return "Won"
+            return "Win"
+        case 3:
+            return "Abort"
     return "Unknown"
 
 async def build_session_embed(info: ServerPayload, session_id: str, from_update: bool) -> discord.Embed:
@@ -217,24 +219,27 @@ async def build_session_embed(info: ServerPayload, session_id: str, from_update:
         value=f"{map_name}",
         inline=False
     )
-
-    if (abs(info.wave_state) > 0):   
-        embed.add_field(
-            name="Wave",
-            value=f"{abs(info.wave_state)}",
-            inline=False
-        )
-
-    if info.player_list:
-        profiles = await get_steam_profiles(info.player_list)
-        player_list_str = "\n".join([profiles[pid].persona_name for pid in info.player_list])
-    else:
-        player_list_str = "None"
     embed.add_field(
-        name="Player List",
-        value=player_list_str,
+        name="Wave",
+        value=f"{abs(info.wave_state)}",
         inline=False
     )
+
+    if (info.match_state == 0):
+
+        if info.player_list:
+            profiles = await get_steam_profiles(info.player_list)
+            player_list_str = "\n".join([profiles[pid].persona_name for pid in info.player_list])
+            if info.spectator_count > 0:
+                player_list_str = player_list_str + f"\nSpectators: {info.spectator_count}"
+
+        else:
+            player_list_str = "None"
+        embed.add_field(
+            name=f"Player List {info.player_count}/{info.player_max}",
+            value=player_list_str,
+            inline=False
+        )
 
     embed.set_footer(
         text=f"Last updated {now.strftime('%d/%m/%Y %H:%M')}",
@@ -249,7 +254,10 @@ async def create_session_embed(channel, info: ServerPayload, session_id: str):
 
 async def update_session_embed(info: ServerPayload, session_id: str):
     embed = await build_session_embed(info, session_id, True)
-    await active_embeds[session_id].msg.edit(embed=embed)
+    try:
+        await active_embeds[session_id].msg.edit(embed=embed)
+    except:
+        print("Failed to edit message.")
     active_embeds[session_id].last_update = datetime.datetime.now()
 
     if info.match_state != -1:
@@ -283,7 +291,17 @@ async def embed_update_loop(channel):
     while True:
         await asyncio.sleep(bot_config.update_cooldown)
         await update_active_embeds(channel)
-    
+
+def update_dead_session(sid):
+    if sid in session_payloads:
+        session_payloads[sid].player_count = 0
+        session_payloads[sid].spectator_count = 0
+        session_payloads[sid].player_list = []
+        session_payloads[sid].spectator_list = []
+
+        if session_payloads[sid].match_state == 0:
+            session_payloads[sid].match_state = 3
+
 
 async def tcp_listener():
     loop = asyncio.get_event_loop()
@@ -309,6 +327,7 @@ async def tcp_listener():
 async def handle_client(conn: socket.socket):
     buffer = ""
     loop = asyncio.get_event_loop()
+    last_known_session_id = ""
     while True:
         try:
             data = await loop.sock_recv(conn, 8192)
@@ -328,9 +347,15 @@ async def handle_client(conn: socket.socket):
                 try:
                     payload = json.loads(line)
                     sid = payload.get('sid')
-                    print("Session ID: "+sid)
                     if not sid:
                         continue
+
+                    if last_known_session_id != sid:
+                        print("New session ID: "+sid)
+                        if last_known_session_id:
+                            update_dead_session(last_known_session_id)
+                        last_known_session_id = sid
+
                     new_info = parse_payload(payload)
                     old_info = session_payloads.get(sid)
                     if not old_info or info_changed(old_info, new_info):
