@@ -400,22 +400,14 @@ async def update_active_embeds(channel):
     session_keys = list(new_session_payloads.keys())
     for sid in session_keys:
         info = new_session_payloads[sid]
-        
-        if not info.match_state or not session_id:
-            continue
 
         match_state = info.match_state
         session_id = info.session_id
 
-        if not session_id:
-            continue
-
-        if match_state == -1:
-            continue
-
-        if session_id not in active_embeds and not match_state == 3:
+        if (session_id not in active_embeds) and not (match_state == 3 or match_state == -1):
+            print(f"Creating new embed for session {session_id}.")
             await create_session_embed(channel, info, session_id)
-        else:
+        elif (session_id in active_embeds):
             await update_session_embed(info, session_id)
     await delete_stale_embeds()
 
@@ -455,7 +447,7 @@ def receive_payload(new_payload: ServerPayload):
     
     session_payloads[new_session_id] = new_payload
 
-    if new_session_id in active_embeds:
+    if new_session_id in active_embeds and session_payloads[new_session_id].match_state != -1:
         active_embeds[new_session_id].last_update = datetime.datetime.now()
 
 async def handle_client(conn: socket.socket):
@@ -507,6 +499,18 @@ async def handle_client(conn: socket.socket):
 
     conn.close()
 
+async def delete_own_messages(channel):
+    deleted = 0
+    async for message in channel.history(limit=None):
+        if message.author == client.user:
+            try:
+                await message.delete()
+                deleted += 1
+            except Exception as e:
+                print(f"Failed to delete message {message.id}: {e}")
+    if deleted > 0:
+        print(f"Deleted {deleted} previous message(s) from channel.")
+
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user}')
@@ -514,6 +518,7 @@ async def on_ready():
     if channel is None:
         print(f"Error: Could not find channel {bot_config.channel_id}.")
         return
+    await delete_own_messages(channel)
     asyncio.get_event_loop().create_task(embed_update_loop(channel))
     await tcp_listener()
 
