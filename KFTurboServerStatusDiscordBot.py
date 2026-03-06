@@ -444,12 +444,10 @@ def receive_payload(new_payload: ServerPayload):
     global session_payloads
     new_session_id = new_payload.session_id
     if (new_session_id in active_embeds) and (new_session_id not in session_payloads):
-        if not info_changed(active_embeds[new_session_id].last_payload, new_payload):
-            return
-    
-    session_payloads[new_session_id] = new_payload
+        if info_changed(active_embeds[new_session_id].last_payload, new_payload):
+            session_payloads[new_session_id] = new_payload
 
-    if new_session_id in active_embeds and session_payloads[new_session_id].match_state != -1:
+    if new_session_id in active_embeds and new_payload.match_state == 0:
         active_embeds[new_session_id].last_update = datetime.datetime.now()
 
 async def handle_client(conn: socket.socket):
