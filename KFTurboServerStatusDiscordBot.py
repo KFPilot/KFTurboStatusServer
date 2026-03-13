@@ -245,7 +245,7 @@ def get_flag_icon(Payload:ServerPayload) -> str:
         
         
 def get_player_text(PlayerName:str, perk:str)-> str:
-    return f"{get_perk_icon(perk)} {PlayerName}"
+    return f"{get_perk_icon(perk)}"
 
 def get_perk_icon(perk:str)-> str:
     match (perk.lower()):
@@ -294,12 +294,6 @@ async def build_session_embed(info: ServerPayload, session_id: str) -> discord.E
     else:
         wave = ("Wave", wave)
 
-    spectator_count = info.spectator_count if info.spectator_count is not None else 0
-    if spectator_count == 0:
-        spectator_count = ("\u200b", "\u200b")
-    else:
-        spectator_count = ("Spectators", str(spectator_count))
-
     # Grid: left to right, top to bottom
     # Discord automatically wraps after 3 fields if inline, so we can just add them in order
     grid_fields = [
@@ -307,8 +301,7 @@ async def build_session_embed(info: ServerPayload, session_id: str) -> discord.E
         ("Map", map_name),
         ("State", state),
         ("Difficulty", difficulty),
-        wave,
-        spectator_count,
+        wave
     ]
 
     for name, value in grid_fields:
@@ -319,53 +312,47 @@ async def build_session_embed(info: ServerPayload, session_id: str) -> discord.E
         Col = 0
         Row = 0
 
+        profiles = await get_steam_profiles(info.player_list)
+
         PlayerLists : list[list[PlayerEntry]] = list()
         PlayerLists.append([])
         PlayerLists.append([])
         PlayerLists.append([])
         for player in info.player_list:
-            PlayerLists[Col].append(player)
+            PlayerLists[Row].append(player)
             Col = Col + 1
-            if (Col >= 3):
+            if (Col > 5):
                 Row = Row + 1
                 Col = 0
 
-        profiles = await get_steam_profiles(info.player_list)
         
         player_list_str = "\u200b"
         if len(PlayerLists[0]) != 0: 
-            player_list_str = "\n".join([get_player_text(profiles[player.steam_id].persona_name, player.perk) for player in PlayerLists[0]])
+            player_list_str = "".join([get_player_text(profiles[player.steam_id].persona_name, player.perk) for player in PlayerLists[0]])
+        if len(PlayerLists[1]) != 0: 
+            player_list_str = player_list_str + "\n" + "".join([get_player_text(profiles[player.steam_id].persona_name, player.perk) for player in PlayerLists[1]])
+        if len(PlayerLists[2]) != 0: 
+            player_list_str = player_list_str + "\n" + "".join([get_player_text(profiles[player.steam_id].persona_name, player.perk) for player in PlayerLists[2]])
         
         embed.add_field(
             name=f"Player List {info.player_count} / {info.player_max}",
             value=player_list_str,
             inline=True
         )
-
-        player_list_str = "\u200b"
-        if len(PlayerLists[1]) != 0: 
-            player_list_str = "\n".join([get_player_text(profiles[player.steam_id].persona_name, player.perk) for player in PlayerLists[1]])
-
-        embed.add_field(
-            name="\u200b",
-            value=player_list_str,
-            inline=True
-        )
-
-        player_list_str = "\u200b"
-        if len(PlayerLists[2]) != 0: 
-            player_list_str = "\n".join([get_player_text(profiles[player.steam_id].persona_name, player.perk) for player in PlayerLists[2]])
         
-        embed.add_field(
-            name="\u200b",
-            value=player_list_str,
-            inline=True
-        )
+        spectator_count = info.spectator_count if info.spectator_count is not None else 0
+        if spectator_count != 0:
+            embed.add_field(
+                name="Spectators",
+                value=str(spectator_count),
+                inline=True
+            )
 
     embed.set_footer(
         text=f"Last updated {now.strftime('%d/%m/%Y %H:%M')}",
         icon_url="https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/TurboRelay.png"
     )
+    
     return embed
 
 async def create_session_embed(channel, info: ServerPayload, session_id: str):
@@ -442,13 +429,25 @@ async def tcp_listener():
 
 def receive_payload(new_payload: ServerPayload):
     global session_payloads
-    new_session_id = new_payload.session_id
-    if (new_session_id in active_embeds) and (new_session_id not in session_payloads):
-        if info_changed(active_embeds[new_session_id].last_payload, new_payload):
-            session_payloads[new_session_id] = new_payload
 
+    # Ignore sessions that have not begun.
+    if new_payload.match_state == -1:
+        return
+
+    new_session_id = new_payload.session_id
+
+    # If new session payload is in active embed list, update its last update time (regardless of whether we update).
     if new_session_id in active_embeds and new_payload.match_state == 0:
         active_embeds[new_session_id].last_update = datetime.datetime.now()
+
+    # If the new session id is not in the active embeds, or we already queued an update for this session, update without checking diff.
+    if (not (new_session_id in active_embeds)) or (new_session_id in session_payloads):
+        session_payloads[new_session_id] = new_payload
+        return
+
+    # If info has changed since last embed update, update.
+    if info_changed(active_embeds[new_session_id].last_payload, new_payload):
+        session_payloads[new_session_id] = new_payload
 
 async def handle_client(conn: socket.socket):
     buffer = ""
@@ -469,7 +468,7 @@ async def handle_client(conn: socket.socket):
 
                 if (line == "keepalive"):
                     continue
-
+                
                 try:
                     payload = json.loads(line)
                     sid = payload.get('sid')
@@ -477,7 +476,7 @@ async def handle_client(conn: socket.socket):
                         continue
 
                     if last_known_session_id != sid:
-                        print("New session ID: "+sid)
+                        print(f"New session ID {sid}")
                         last_known_session_id = sid
 
                     new_info = parse_payload(payload)
