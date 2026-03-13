@@ -9,6 +9,7 @@ import json
 import datetime
 import socket
 import sys
+import os
 import aiohttp
 from dataclasses import dataclass, field
 from typing import Optional
@@ -498,6 +499,16 @@ async def handle_client(conn: socket.socket):
 
     conn.close()
 
+stop_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stop')
+
+async def stop_file_monitor():
+    while True:
+        await asyncio.sleep(5)
+        if os.path.exists(stop_file_path):
+            print("Stop file detected. Shutting down gracefully...")
+            await client.close()
+            return
+
 async def delete_own_messages(channel):
     deleted = 0
     async for message in channel.history(limit=None):
@@ -519,6 +530,7 @@ async def on_ready():
         return
     await delete_own_messages(channel)
     asyncio.get_event_loop().create_task(embed_update_loop(channel))
+    asyncio.get_event_loop().create_task(stop_file_monitor())
     await tcp_listener()
 
 client.run(bot_config.discord_token)
