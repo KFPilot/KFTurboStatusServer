@@ -13,6 +13,14 @@ import os
 import aiohttp
 from dataclasses import dataclass, field
 from typing import Optional
+from pathlib import Path
+
+EmbedConfigPath = Path(__file__).parent / "serverembedconfig.json"
+with open(EmbedConfigPath, "r", encoding="utf-8") as _f:
+    EmbedConfig = json.load(_f)
+ServerData = EmbedConfig["servers"]
+PerkIcons = EmbedConfig["perk_icons"]
+Defaults = EmbedConfig["defaults"]
 
 @dataclass
 class BotConfig:
@@ -23,6 +31,7 @@ class BotConfig:
     steam_api_key: str
     steam_api_url: str
     update_cooldown: float
+    add_server_url : bool
 
 @dataclass
 class SteamProfile:
@@ -73,6 +82,7 @@ bot_config = BotConfig(
     steam_api_key=raw_config['steam_api_key'],
     steam_api_url=raw_config['steam_api_url'],
     update_cooldown=float(raw_config.get('update_cooldown', 0.5)),
+    add_server_url=bool(raw_config.get('add_server_url', False))
 )
 
 intents = discord.Intents.default()
@@ -194,6 +204,8 @@ def get_match_state_name(Payload:ServerPayload)-> str:
         case -1:
             return "Waiting"
         case 0:
+            if Payload.game and Payload.game.lower() == "turbotest":
+                return "Active"
             return "In Progress"
         case 1:
             return "Wipe"
@@ -216,66 +228,48 @@ def get_wave_text(Payload:ServerPayload)-> str:
         return f"{wave_number} / {Payload.final_wave}"
     return f"{wave_number}"
 
+def find_location_suffix(name: str) -> str | None:
+    name = name.lower().rstrip()
+    for loc in ServerData:
+        if loc in name:
+            return loc
+    return None
+
 def get_flag_icon(Payload:ServerPayload) -> str:
     if not Payload.name:
         return ""
-    name = Payload.name.lower().rstrip()
-    # Extract the last word(s) for matching
-    suffix = None
-    for loc in ["new york", "los angeles", "frankfurt", "sao paulo", "london", "singapore", "tokyo", "warsaw"]:
-        if name.endswith(loc):
-            suffix = loc
-            break
-    match suffix:
-        case "new york" | "los angeles":
-            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-united-states.png"
-        case "frankfurt":
-            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-germany.png"
-        case "sao paulo":
-            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-brazil.png"
-        case "london":
-            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-united-kingdom.png"
-        case "singapore":
-            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-singapore.png"
-        case "tokyo":
-            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-japan.png"
-        case "warsaw":
-            return "https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/flag-poland.png"
-        case _:
-            return "https://cdn.discordapp.com/embed/avatars/0.png"
-        
+    suffix = find_location_suffix(Payload.name)
+    if suffix and suffix in ServerData:
+        return ServerData[suffix]["flag_icon"]
+    return Defaults["flag_icon"]
+
+def get_play_url(Payload:ServerPayload) -> str:
+    if not Payload.name:
+        return ""
+    suffix = find_location_suffix(Payload.name)
+    if suffix and suffix in ServerData:
+        return ServerData[suffix]["play_url"]
+    return Defaults["play_url"]
         
 def get_player_text(PlayerName:str, perk:str)-> str:
     return f"{get_perk_icon(perk)}"
 
 def get_perk_icon(perk:str)-> str:
-    match (perk.lower()):
-        case "med":
-            return "<:PerkMedic:1478637214148595894>"
-        case "sup":
-            return "<:PerkSupport:1478637310068260988>"
-        case "sha":
-            return "<:PerkSharpshooter:1478637191046496438>"
-        case "com":
-            return "<:PerkCommando:1478637293240848456>"
-        case "ber":
-            return "<:PerkBerserker:1478637275066798201>"
-        case "fir":
-            return "<:PerkFirebug:1478637233287331951>"
-        case "dem":
-            return "<:PerkDemolitions:1478637253571121173>"
-    return "<:PerkSharpshooter:1478637191046496438>"
+    return PerkIcons.get(perk.lower(), Defaults["perk_icon"])
             
 
 async def build_session_embed(info: ServerPayload, session_id: str) -> discord.Embed:
-    now = datetime.datetime.now()
-
     embed = discord.Embed(
-        title="Killing Floor Turbo Session",
         color=0xf6731a
     )
-    if info.match_state > 0:
+
+    if info.match_state == 3:
+        embed.color = 0x444444
+    elif info.match_state > 0:
         embed.color = 0xef2e1c
+
+    if bot_config.add_server_url:
+        embed.description=f"[Click to join!](https://{get_play_url(info)})"
 
     embed.set_author(
         name=info.name or session_id,
@@ -350,7 +344,7 @@ async def build_session_embed(info: ServerPayload, session_id: str) -> discord.E
             )
 
     embed.set_footer(
-        text=f"Last updated {now.strftime('%d/%m/%Y %H:%M')}",
+        text=f"Last updated {datetime.datetime.now(datetime.timezone.utc).strftime('%d/%m/%Y %H:%M')}",
         icon_url="https://raw.githubusercontent.com/KFPilot/KFTurboStatusServer/refs/heads/main/img/TurboRelay.png"
     )
     
