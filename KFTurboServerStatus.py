@@ -7,7 +7,7 @@ import asyncio
 import json
 import socket
 import sys
-import dataclasses
+
 
 from KFTurboServerStatusTypes import BotConfig, PlayerEntry, ServerPayload
 
@@ -52,10 +52,8 @@ if http_port:
 def update_session_data():
     if not web_server:
         return
-    serialized = {}
-    for sid, payload in session_data.items():
-        serialized[sid] = dataclasses.asdict(payload)
-    web_server.update(json.dumps(serialized))
+    
+    web_server.update(session_data)
 
 def parse_payload(data: dict) -> ServerPayload:
     PlayerCount = data.get('pc', '0|0|0').split('|')
