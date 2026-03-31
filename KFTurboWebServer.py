@@ -56,7 +56,7 @@ class SessionDataServer(HTTPServer):
                 server=payload.name or payload.session_id,
                 current_players=payload.player_count or 0,
                 max_players=payload.player_max or 0,
-                current_map=payload.map_name or payload.map_file or "",
+                current_map=payload.map_file or "",
             ))
         self.cached_json = json.dumps(entries).encode("utf-8")
 
