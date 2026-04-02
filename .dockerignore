@@ -1,0 +1,13 @@
+*
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!README.md
+!LICENSE
+!KFTurboDiscordEmbed.py
+!KFTurboServerStatus.py
+!KFTurboServerStatusTypes.py
+!KFTurboWebServer.py
+!StatusConnectionManager.py
+!img/
+!img/**
