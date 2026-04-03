@@ -6,7 +6,7 @@ services:
     container_name: kfturbo-status
     restart: unless-stopped
     ports:
-      - "${KF_LISTEN_PORT:-9999}:${KF_LISTEN_PORT:-9999}/tcp"
+      - "${KF_LISTEN_PORT:-9393}:${KF_LISTEN_PORT:-9393}/tcp"
       # Optional: expose only if http_port is enabled in serverstatusconfig.json
       - "${KF_HTTP_PORT:-8080}:${KF_HTTP_PORT:-8080}/tcp"
     volumes:
